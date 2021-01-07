@@ -1,15 +1,13 @@
-import os
 from argparse import ArgumentParser
 
-import torch
 import pytorch_lightning as pl
+import torch
 from comet_ml import API
 from pytorch_lightning.loggers import CometLogger
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, random_split
-
-from torchvision.datasets.mnist import MNIST
 from torchvision import transforms
+from torchvision.datasets.mnist import MNIST
 
 
 class Backbone(torch.nn.Module):
@@ -77,6 +75,11 @@ def cli_main():
     parser.add_argument('--hidden_dim', type=int, default=128)
     parser.add_argument('--early_stop_callback', type=bool, default=True)
     parser.add_argument('--num_dataloader_workers', type=int, default=1)
+    parser.add_argument('--comet_workspace_name', type=str, default=None)
+    parser.add_argument('--comet_project_name', type=str, default=None)
+    parser.add_argument('--comet_model_name', type=str, default=None)
+    parser.add_argument('--comet_registry_model_name', type=str, default=None)
+    parser.add_argument('--comet_registry_model_version', type=str, default='1.0.0')
     parser = pl.Trainer.add_argparse_args(parser)
     parser = LitClassifier.add_model_specific_args(parser)
     args = parser.parse_args()
@@ -100,20 +103,31 @@ def cli_main():
     # ------------
     # checkpoint
     # ------------
-    try:
-        api = API(api_key=os.environ.get('COMET_API_KEY'))
-        experiment = api.get(f'workspace-name/project-name/EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}',
-                             output_path="./", expand=True)
+    if args.comet_workspace_name is not None \
+            and args.comet_project_name is not None \
+            and args.comet_registry_model_name is not None:
+        try:
+            model = LitClassifier(Backbone(hidden_dim=args.hidden_dim), args.learning_rate)
+            api = API()
 
-        # Download an Experiment Model:
-        experiment.download_model(f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model',
-                                  output_path="./", expand=True)
+            # Download an Experiment Model:
+            if args.comet_model_name is not None:
+                experiment = api.get(
+                    f'{args.comet_workspace_name}/{args.comet_project_name}/{args.comet_experiment_name}')
+                experiment.download_model(args.comet_model_name, output_path="./", expand=True)
 
-        model = LitClassifier.load_from_checkpoint(
-            f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
-        print('Resuming from checkpoint...')
-    except FileNotFoundError:
-        print('Could not restore checkpoint. Skipping...')
+            # Download a Registry Model:
+            if args.comet_registry_model_name is not None:
+                api.download_registry_model(args.comet_workspace_name, args.comet_registry_model_name,
+                                            args.comet_registry_model_version, output_path="./", expand=True)
+
+            # TODO: Research how to properly load a state dict file with PyTorch Lightning
+            model = model.load_state_dict(
+                torch.load(f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth'))
+
+            print('Resuming from checkpoint...')
+        except AttributeError:
+            print('Could not restore checkpoint. Skipping...')
 
     # ------------
     # training
@@ -122,11 +136,8 @@ def cli_main():
 
     # The arguments made to CometLogger are passed on to the comet_ml.Experiment class
     comet_logger = CometLogger(
-        api_key=os.environ.get('COMET_API_KEY'),
-        save_dir='.',  # Optional
-        project_name='dlhpt',  # Optional
-        experiment_name=f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}',  # Optional
-        log_hyperparams=True
+        project_name=args.comet_project_name,  # Optional
+        experiment_name=f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}'  # Optional
     )
     trainer.logger = comet_logger
     trainer.early_stop_callback = args.early_stop_callback
@@ -144,7 +155,6 @@ def cli_main():
     torch.save(model.state_dict(), f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
     comet_logger.experiment.log_model(f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model',
                                       f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
-    comet_logger.finalize()
 
 
 if __name__ == '__main__':

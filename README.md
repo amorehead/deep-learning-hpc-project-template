@@ -86,17 +86,24 @@ pip3 install -r requirements.txt
 pip3 install -r tests/requirements.txt
  ```
 
-Set up Comet.ml for advanced logging:
+Authenticate with Comet.ml's API to enable advanced logging:
 ```bash
-# Create a shell variable for your personal Comet.ml API key
-export COMET_API_KEY=MY_COMET_API_KEY
+# Move to module directory
+cd project
+
+# Create a hidden config file to house your private Comet.ml API key
+touch .comet.config
+
+# Edit this config file with your text editor of choice (i.e. Vim for this example)
+vim .comet.config
+
+# Use the following format to declare your private Comet.ml API key inside .comet.config
+[comet]
+api_key=YOUR-API-KEY
  ```
 
  Then, navigate to any file and run it:
  ```bash
-# Module folder
-cd project
-
 # Run module (e.g. MNIST as your main contribution)   
 python lit_image_classifier.py    
 ```
