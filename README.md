@@ -1,4 +1,5 @@
 ### Deep learning project seed
+
 Use this seed to start new deep learning / ML projects.
 
 - Built in setup.py
@@ -7,21 +8,23 @@ Use this seed to start new deep learning / ML projects.
 - Badges
 - Bibtex
 
-#### Goals  
-The goal of this seed is to structure ML paper-code the same so that work can easily be extended and replicated.   
+#### Goals
 
-### DELETE EVERYTHING ABOVE FOR YOUR PROJECT  
+The goal of this seed is to structure ML paper-code the same so that work can easily be extended and replicated.
+
+### DELETE EVERYTHING ABOVE FOR YOUR PROJECT
+
  
 ---
 
 <div align="center">    
- 
-# Your HPC Project Name     
+
+# Your HPC Project Name
 
 [![Paper](http://img.shields.io/badge/paper-arxiv.1001.2234-B31B1B.svg)](https://www.nature.com/articles/nature14539)
 [![Conference](http://img.shields.io/badge/NeurIPS-2019-4b44ce.svg)](https://papers.nips.cc/book/advances-in-neural-information-processing-systems-31-2018)
 [![Conference](http://img.shields.io/badge/ICLR-2019-4b44ce.svg)](https://papers.nips.cc/book/advances-in-neural-information-processing-systems-31-2018)
-[![Conference](http://img.shields.io/badge/AnyConference-year-4b44ce.svg)](https://papers.nips.cc/book/advances-in-neural-information-processing-systems-31-2018)  
+[![Conference](http://img.shields.io/badge/AnyConference-year-4b44ce.svg)](https://papers.nips.cc/book/advances-in-neural-information-processing-systems-31-2018)
 <!--
 ARXIV   
 [![Paper](http://img.shields.io/badge/arxiv-math.co:1480.1111-B31B1B.svg)](https://www.nature.com/articles/nature14539)
@@ -33,12 +36,15 @@ ARXIV
 Conference   
 -->   
 </div>
- 
-## Description   
-What it does   
 
-## How to run   
+## Description
+
+What it does
+
+## How to run
+
 First, create a Conda environment for the project:
+
 ```bash
 # Clone project   
 git clone https://github.com/YourGithubName/deep-learning-hpc-project-template
@@ -47,7 +53,7 @@ git clone https://github.com/YourGithubName/deep-learning-hpc-project-template
 cd deep-learning-hpc-project-template
 
 # (If on HPC cluster) Load 'open-ce' module
-module load open-ce-0.1-0
+module load open-ce/0.1-0
 
 # (If on HPC cluster) Clone Conda environment into this directory using provided 'open-ce' environment:
 conda create --prefix ./venv --clone open-ce-0.1-0
@@ -70,11 +76,15 @@ conda activate MY-VENV-DIR
 # (Optional) Deactivate the currently-activated Conda environment:
 conda deactivate
 
+# (If on local machine - Optional) Perform a full update on the Conda environment described in 'environment.yml':
+conda env update -f environment.yml --prune
+
 # (Optional) To remove this long prefix in your shell prompt, modify the env_prompt setting in your .condarc file with:
 conda config --set env_prompt '({name})'
 ```
 
 (If on HPC cluster) Install all project dependencies:
+
 ```bash
 # Install project as a pip dependency in the Conda environment currently activated:
 pip3 install -e .
@@ -101,15 +111,20 @@ vim .comet.config
 [comet]
 api_key=YOUR-API-KEY
  ```
+Then, navigate to any file and run it:
 
- Then, navigate to any file and run it:
  ```bash
-# Run module (e.g. MNIST as your main contribution)   
+# Module folder
+cd project
+
+# Run module (example: MNIST as your main contribution)   
 python lit_image_classifier.py    
 ```
 
 ## Imports
+
 This project is set up as a package which means you can now easily import any file into any other file like so:
+
 ```python
 from project.datasets.mnist import mnist
 from project.lit_image_classifier import LitClassifier
@@ -129,7 +144,8 @@ trainer.fit(model, train, val)
 trainer.test(test_dataloaders=test)
 ```
 
-### Citation   
+### Citation
+
 ```
 @article{YourName,
   title={Your Title},

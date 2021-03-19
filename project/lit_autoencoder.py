@@ -1,22 +1,23 @@
-import os
 from argparse import ArgumentParser
+
+import pytorch_lightning as pl
 import torch
-from comet_ml import API
+import torch.nn.functional as F
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import CometLogger
 from torch import nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import pytorch_lightning as pl
 from torch.utils.data import random_split
-
-from torchvision.datasets.mnist import MNIST
 from torchvision import transforms
+from torchvision.datasets.mnist import MNIST
 
 
 class LitAutoEncoder(pl.LightningModule):
 
-    def __init__(self):
+    def __init__(self, lr: float = 1e-3, save_dir: str = ''):
         super().__init__()
+        self.save_hyperparameters()
+
         self.encoder = nn.Sequential(
             nn.Linear(28 * 28, 64),
             nn.ReLU(),
@@ -39,11 +40,28 @@ class LitAutoEncoder(pl.LightningModule):
         z = self.encoder(x)
         x_hat = self.decoder(z)
         loss = F.mse_loss(x_hat, x)
+        self.log('train_mse_loss', loss)
         return loss
 
+    # ---------------------
+    # training setup
+    # ---------------------
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
+        # scheduler = CosineAnnealingWarmRestarts(optimizer, self.hparams.num_epochs, eta_min=1e-4)
+        metric_to_track = 'train_mse_loss'
+        return {
+            'optimizer': optimizer,
+            # 'lr_scheduler': scheduler,
+            'monitor': metric_to_track
+        }
+
+    def configure_callbacks(self):
+        early_stop = EarlyStopping(monitor="train_mse_loss", mode="min")
+        checkpoint = ModelCheckpoint(monitor="train_mse_loss", save_top_k=3,
+                                     dirpath=self.hparams.save_dir,
+                                     filename='LitAutoEncoder-{epoch:02d}-{train_mse_loss:.2f}')
+        return [early_stop, checkpoint]
 
 
 def cli_main():
@@ -53,12 +71,26 @@ def cli_main():
     # args
     # ------------
     parser = ArgumentParser()
-    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--num_epochs', type=int, default=5, help="Number of epochs")
+    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--lr', type=float, default=1e-3, help="Learning rate")
     parser.add_argument('--hidden_dim', type=int, default=128)
+    parser.add_argument('--num_dataloader_workers', type=int, default=2)
+    parser.add_argument('--save_dir', type=str, default="models", help="Directory in which to save models")
+
     parser.add_argument('--early_stop_callback', type=bool, default=True)
-    parser.add_argument('--num_dataloader_workers', type=int, default=1)
+    parser.add_argument('--comet_workspace_name', type=str, default=None)
+    parser.add_argument('--comet_project_name', type=str, default=None)
+    parser.add_argument('--comet_model_name', type=str, default=None)
+    parser.add_argument('--comet_registry_model_name', type=str, default=None)
+    parser.add_argument('--comet_registry_model_version', type=str, default='1.0.0')
+
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
+
+    # Define HPC-specific properties in-file
+    args.accelerator = 'ddp'
+    args.gpus = 6
 
     # ------------
     # data
@@ -74,42 +106,21 @@ def cli_main():
     # ------------
     # model
     # ------------
-    model = LitAutoEncoder()
-
-    # ------------
-    # checkpoint
-    # ------------
-    try:
-        api = API(api_key=os.environ.get('COMET_API_KEY'))
-        experiment = api.get(f'workspace-name/project-name/EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}',
-                             output_path="./", expand=True)
-
-        # Download an Experiment Model:
-        experiment.download_model(f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model',
-                                  output_path="./", expand=True)
-
-        model = LitAutoEncoder.load_from_checkpoint(
-            f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
-        print('Resuming from checkpoint...')
-    except FileNotFoundError:
-        print('Could not restore checkpoint. Skipping...')
+    model = LitAutoEncoder(args.lr, args.save_dir)
 
     # ------------
     # training
     # ------------
     trainer = pl.Trainer.from_argparse_args(args)
+    trainer.min_epochs = args.num_epochs
 
     # The arguments made to CometLogger are passed on to the comet_ml.Experiment class
     comet_logger = CometLogger(
-        api_key=os.environ.get('COMET_API_KEY'),
-        save_dir='.',  # Optional
-        project_name='dlhpt',  # Optional
-        experiment_name=f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}',  # Optional
-        log_hyperparams=True
+        project_name=args.comet_project_name,  # Optional
+        experiment_name=f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}'  # Optional
     )
     trainer.logger = comet_logger
 
-    trainer.early_stop_callback = args.early_stop_callback
     trainer.fit(model, train_loader, val_loader)
 
     # ------------
@@ -117,14 +128,6 @@ def cli_main():
     # ------------
     result = trainer.test(test_dataloaders=test_loader)
     print(result)
-
-    # ------------
-    # finalizing
-    # ------------
-    torch.save(model.state_dict(), f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
-    comet_logger.experiment.log_model(f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model',
-                                      f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
-    comet_logger.finalize()
 
 
 if __name__ == '__main__':

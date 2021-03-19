@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 
 import pytorch_lightning as pl
 import torch
-from comet_ml import API
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import CometLogger
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, random_split
@@ -24,7 +24,7 @@ class Backbone(torch.nn.Module):
 
 
 class LitClassifier(pl.LightningModule):
-    def __init__(self, backbone, learning_rate=1e-3):
+    def __init__(self, backbone, learning_rate=1e-3, save_dir: str = ''):
         super().__init__()
         self.save_hyperparameters()
         self.backbone = backbone
@@ -38,24 +38,41 @@ class LitClassifier(pl.LightningModule):
         x, y = batch
         y_hat = self.backbone(x)
         loss = F.cross_entropy(y_hat, y)
-        self.log('train_loss', loss, on_epoch=True)
+        self.log('train_cross_entropy', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.backbone(x)
         loss = F.cross_entropy(y_hat, y)
-        self.log('valid_loss', loss, on_step=True)
+        self.log('valid_cross_entropy', loss, on_step=True, on_epoch=True, sync_dist=True)
 
     def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.backbone(x)
         loss = F.cross_entropy(y_hat, y)
-        self.log('test_loss', loss)
+        self.log('test_cross_entropy', loss, on_step=True, on_epoch=True, sync_dist=True)
 
+    # ---------------------
+    # training setup
+    # ---------------------
     def configure_optimizers(self):
         # self.hparams available because we called self.save_hyperparameters()
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        # scheduler = CosineAnnealingWarmRestarts(optimizer, self.hparams.num_epochs, eta_min=1e-4)
+        metric_to_track = 'valid_cross_entropy'
+        return {
+            'optimizer': optimizer,
+            # 'lr_scheduler': scheduler,
+            'monitor': metric_to_track
+        }
+
+    def configure_callbacks(self):
+        early_stop = EarlyStopping(monitor="valid_cross_entropy", mode="min")
+        checkpoint = ModelCheckpoint(monitor="valid_cross_entropy", save_top_k=3,
+                                     dirpath=self.hparams.save_dir,
+                                     filename='LitClassifier-{epoch:02d}-{valid_cross_entropy:.2f}')
+        return [early_stop, checkpoint]
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -71,18 +88,27 @@ def cli_main():
     # args
     # ------------
     parser = ArgumentParser()
-    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--num_epochs', type=int, default=5, help="Number of epochs")
+    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--lr', type=float, default=1e-3, help="Learning rate")
     parser.add_argument('--hidden_dim', type=int, default=128)
+    parser.add_argument('--save_dir', type=str, default="models", help="Directory in which to save models")
+
     parser.add_argument('--early_stop_callback', type=bool, default=True)
-    parser.add_argument('--num_dataloader_workers', type=int, default=1)
+    parser.add_argument('--num_dataloader_workers', type=int, default=2)
     parser.add_argument('--comet_workspace_name', type=str, default=None)
     parser.add_argument('--comet_project_name', type=str, default=None)
     parser.add_argument('--comet_model_name', type=str, default=None)
     parser.add_argument('--comet_registry_model_name', type=str, default=None)
     parser.add_argument('--comet_registry_model_version', type=str, default='1.0.0')
+
     parser = pl.Trainer.add_argparse_args(parser)
     parser = LitClassifier.add_model_specific_args(parser)
     args = parser.parse_args()
+
+    # Define HPC-specific properties in-file
+    args.accelerator = 'ddp'
+    args.gpus = 6
 
     # ------------
     # data
@@ -98,41 +124,13 @@ def cli_main():
     # ------------
     # model
     # ------------
-    model = LitClassifier(Backbone(hidden_dim=args.hidden_dim), args.learning_rate)
-
-    # ------------
-    # checkpoint
-    # ------------
-    if args.comet_workspace_name is not None \
-            and args.comet_project_name is not None \
-            and args.comet_registry_model_name is not None:
-        try:
-            model = LitClassifier(Backbone(hidden_dim=args.hidden_dim), args.learning_rate)
-            api = API()
-
-            # Download an Experiment Model:
-            if args.comet_model_name is not None:
-                experiment = api.get(
-                    f'{args.comet_workspace_name}/{args.comet_project_name}/{args.comet_experiment_name}')
-                experiment.download_model(args.comet_model_name, output_path="./", expand=True)
-
-            # Download a Registry Model:
-            if args.comet_registry_model_name is not None:
-                api.download_registry_model(args.comet_workspace_name, args.comet_registry_model_name,
-                                            args.comet_registry_model_version, output_path="./", expand=True)
-
-            # TODO: Research how to properly load a state dict file with PyTorch Lightning
-            model = model.load_state_dict(
-                torch.load(f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth'))
-
-            print('Resuming from checkpoint...')
-        except AttributeError:
-            print('Could not restore checkpoint. Skipping...')
+    model = LitClassifier(Backbone(hidden_dim=args.hidden_dim), args.lr, args.save_dir)
 
     # ------------
     # training
     # ------------
     trainer = pl.Trainer.from_argparse_args(args)
+    trainer.min_epochs = args.num_epochs
 
     # The arguments made to CometLogger are passed on to the comet_ml.Experiment class
     comet_logger = CometLogger(
@@ -148,13 +146,6 @@ def cli_main():
     # ------------
     result = trainer.test(test_dataloaders=test_loader)
     print(result)
-
-    # ------------
-    # finalizing
-    # ------------
-    torch.save(model.state_dict(), f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
-    comet_logger.experiment.log_model(f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model',
-                                      f'EarlyStopping-Adam-{args.batch_size}-{args.learning_rate}-Model.pth')
 
 
 if __name__ == '__main__':

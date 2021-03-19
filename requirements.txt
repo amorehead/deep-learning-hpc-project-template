@@ -1,2 +1,2 @@
-pytorch-lightning >= 1.1.2
-comet-ml >= 3.2.9
+comet-ml
+pytorch-lightning
