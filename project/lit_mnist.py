@@ -97,7 +97,7 @@ def cli_main():
 
     # Define HPC-specific properties in-file
     args.accelerator = 'ddp'
-    args.gpus = 6
+    args.gpus, args.num_nodes = 6, 2
 
     # ------------
     # data
